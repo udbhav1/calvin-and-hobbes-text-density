@@ -2,8 +2,6 @@ todo.txt
 .env
 
 /data/*
-!/data/complete.pdf
-
 /out/*
 
 **/*.ipynb_checkpoints/
