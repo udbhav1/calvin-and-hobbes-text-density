@@ -1,6 +1,6 @@
 import argparse
 import io
-from typing import List, Tuple
+import subprocess
 
 import numpy as np
 import pymupdf
@@ -10,20 +10,20 @@ from skimage.color import label2rgb, rgb2gray
 from skimage.feature import canny
 from skimage.measure import label, regionprops
 
+BBox = tuple[float, float, float, float]
+
 PANEL_PAGE_AREA_THRESHOLD_PERCENT = 2
 
 
-def check_bbox_overlap(a, b):
+def check_bbox_overlap(a: BBox, b: BBox) -> bool:
     return a[0] < b[2] and a[2] > b[0] and a[1] < b[3] and a[3] > b[1]
 
 
-def merge_bbox(a, b):
+def merge_bbox(a: BBox, b: BBox) -> BBox:
     return (min(a[0], b[0]), min(a[1], b[1]), max(a[2], b[2]), max(a[3], b[3]))
 
 
-def get_panel_bbox(
-    page: Image.Image, width, height
-) -> List[Tuple[float, float, float, float]]:
+def get_panel_bbox(page: Image.Image, width: int, height: int) -> list[BBox]:
     grayscale = rgb2gray(page)
     edges = canny(grayscale)
     # Image.fromarray(edges).save("canny.png")
@@ -81,3 +81,5 @@ def main():
         Image.fromarray((label2rgb(panel_img, bg_label=0) * 255).astype(np.uint8)).save(
             path
         )
+
+    subprocess.run(f"open {args.input_file} {args.output_dir}/*", shell=True)
