@@ -1,3 +1,3 @@
 # calvin-and-hobbes
 
-Describe your project here.
+What's the distribution of (text_area/panel_area) for Calvin and Hobbes strips?

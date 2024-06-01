@@ -1,10 +1,13 @@
 import argparse
 import io
 import subprocess
+import time
 
+import easyocr
 import numpy as np
 import pymupdf
 from PIL import Image, ImageDraw
+from pymupdf import Matrix, Page
 from scipy import ndimage as ndi
 from skimage.color import label2rgb, rgb2gray
 from skimage.feature import canny
@@ -14,8 +17,10 @@ BBox = tuple[float, float, float, float]
 
 PANEL_PAGE_AREA_THRESHOLD_PERCENT = 2
 
+reader = easyocr.Reader(["en"])
 
-def bbox_area(bbox: BBox) -> float:
+
+def calculate_bbox_area(bbox: BBox) -> float:
     return (bbox[2] - bbox[0]) * (bbox[3] - bbox[1])
 
 
@@ -28,6 +33,8 @@ def merge_bboxes(a: BBox, b: BBox) -> BBox:
 
 
 def get_panel_bboxes(page: Image.Image, width: int, height: int) -> list[BBox]:
+    """Extracts panel bounding boxes with canny edge detection"""
+
     grayscale = rgb2gray(page)
     edges = canny(grayscale)
     # Image.fromarray(edges).save("canny.png")
@@ -49,7 +56,7 @@ def get_panel_bboxes(page: Image.Image, width: int, height: int) -> list[BBox]:
             panels.append(region.bbox)
 
     for i, bbox in reversed(list(enumerate(panels))):
-        area = bbox_area(bbox)
+        area = calculate_bbox_area(bbox)
         # print(f"{area}, {100 * area / (width * height):.2f}%")
         if area < (PANEL_PAGE_AREA_THRESHOLD_PERCENT / 100) * width * height:
             del panels[i]
@@ -124,6 +131,40 @@ def expand_panel_bboxes(panels: list[BBox]) -> list[BBox]:
     return final
 
 
+def find_text_bboxes(page: Page, crop: BBox = (0.0, 0.0, 0.0, 0.0)) -> list[BBox]:
+    # dont want to import typing but want crop: BBox in signature so sentinel it is
+    if crop != (0.0, 0.0, 0.0, 0.0):
+        top, left, bottom, right = crop
+        page.set_cropbox(pymupdf.Rect(left, top, right, bottom))  # pyright: ignore
+
+    bboxes = []
+
+    scaling = 2
+    pix = page.get_pixmap(matrix=Matrix(scaling, 0, 0, scaling, 0, 0))  # pyright: ignore
+    img = Image.open(io.BytesIO(pix.tobytes()))
+
+    img = img.convert("L")
+
+    img_np = np.array(img)
+    ocr = reader.readtext(img_np)
+
+    crop_x, crop_y = crop[1], crop[0]
+    for detection in ocr:
+        corners, text, confidence = detection
+        x_coords = [point[0] for point in corners]
+        y_coords = [point[1] for point in corners]
+
+        top = (min(y_coords) / scaling) + crop_y
+        left = (min(x_coords) / scaling) + crop_x
+        bottom = (max(y_coords) / scaling) + crop_y
+        right = (max(x_coords) / scaling) + crop_x
+
+        bbox = (top, left, bottom, right)
+        bboxes.append(bbox)
+
+    return bboxes
+
+
 def render_panels(panels: list[BBox], width: int, height: int, path: str) -> None:
     panel_img = np.zeros((height, width))
     for i, bbox in enumerate(panels, start=1):
@@ -134,8 +175,15 @@ def render_panels(panels: list[BBox], width: int, height: int, path: str) -> Non
     )
 
 
-def render_panels_on_page(panels: list[BBox], page: Image.Image, path: str) -> None:
+def render_annotated_page(
+    panels: list[BBox], text: list[BBox], page: Image.Image, path: str
+) -> None:
     draw = ImageDraw.Draw(page)
+
+    for bbox in text:
+        top, left, bottom, right = bbox
+        draw.rectangle([left, top, right, bottom], outline="green")
+
     for bbox in panels:
         top, left, bottom, right = bbox
         draw.rectangle([left, top, right, bottom], outline="red")
@@ -152,9 +200,9 @@ def main():
     doc = pymupdf.open(args.input_file)
 
     for page_index in range(len(doc)):
-        print(f"Processing page {page_index}")
-        page = doc[page_index]
-        text_blocks = page.get_text("blocks")  # pyright: ignore
+        start = time.time()
+
+        page = doc.load_page(page_index)
         pix = page.get_pixmap()  # pyright: ignore
 
         img_buffer = io.BytesIO()
@@ -165,6 +213,19 @@ def main():
         panels = get_panel_bboxes(img, pix.width, pix.height)
         panels = expand_panel_bboxes(panels)
 
+        panels = sorted(panels, key=lambda bbox: (bbox[0], bbox[1]))
+
+        text = []
+
+        for bbox in panels:
+            panel_area = calculate_bbox_area(bbox)
+            text_bboxes = find_text_bboxes(page, crop=bbox)
+            if text_bboxes:
+                text += text_bboxes
+
+        end = time.time()
+        print(f"Processed page {page_index} in {end - start:.2f}s")
+
         render_panels(
             panels,
             pix.width,
@@ -172,6 +233,8 @@ def main():
             args.output_dir + f"/panels{page_index}.png",
         )
 
-        render_panels_on_page(panels, img, args.output_dir + f"/page{page_index}.png")
+        render_annotated_page(
+            panels, text, img, args.output_dir + f"/page{page_index}.png"
+        )
 
     subprocess.run(f"open {args.output_dir}/*", shell=True)
