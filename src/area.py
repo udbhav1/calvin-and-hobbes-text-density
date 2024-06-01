@@ -57,63 +57,49 @@ def get_panel_bboxes(page: Image.Image, width: int, height: int) -> list[BBox]:
 
     for i, bbox in reversed(list(enumerate(panels))):
         area = calculate_bbox_area(bbox)
-        # print(f"{area}, {100 * area / (width * height):.2f}%")
         if area < (PANEL_PAGE_AREA_THRESHOLD_PERCENT / 100) * width * height:
             del panels[i]
 
     return panels
 
 
-def expand_panel_bboxes(panels: list[BBox]) -> list[BBox]:
-    """Expands panel bounding boxes to fill gaps in layout"""
+def find_adjacent_panels(
+    panels: list[BBox], index: int
+) -> tuple[BBox | None, BBox | None]:
+    """Finds left and right neighbors given a panel index"""
 
-    layout_top = min(bbox[0] for bbox in panels)
-    layout_left = min(bbox[1] for bbox in panels)
-    layout_bottom = max(bbox[2] for bbox in panels)
-    layout_right = max(bbox[3] for bbox in panels)
+    top, left, bottom, right = panels[index]
+    adj_left_bb = None
+    adj_right_bb = None
+
+    for i, other_bbox in enumerate(panels):
+        if i != index:
+            # make sure we're on the same horizontal strip
+            if (
+                abs(other_bbox[0] - top) < 10
+                or abs(other_bbox[2] - bottom) < 10
+                or (other_bbox[0] < top and other_bbox[2] > bottom)
+            ):
+                # 5 = tolerance because we might slightly overlap
+                if other_bbox[3] < (left + 5):
+                    if adj_left_bb is None or other_bbox[3] > adj_left_bb[3]:
+                        adj_left_bb = other_bbox
+                if other_bbox[1] > (right - 5):
+                    if adj_right_bb is None or other_bbox[1] < adj_right_bb[3]:
+                        adj_right_bb = other_bbox
+
+    return adj_left_bb, adj_right_bb
+
+
+def heighten_panel_bboxes(panels: list[BBox]) -> list[BBox]:
+    """Vertically expands panel bounding boxes to match adjacent panels"""
 
     expanded = []
 
-    # make wider
     for i, bbox in enumerate(panels):
         top, left, bottom, right = bbox
-        tb, lb, bb, rb = top, None, bottom, None
 
-        for j, other_bbox in enumerate(panels):
-            if i != j:
-                if other_bbox[3] < left:
-                    if lb is None or other_bbox[3] > lb:
-                        lb = other_bbox[3]
-                if other_bbox[1] > right:
-                    if rb is None or other_bbox[1] < rb:
-                        rb = other_bbox[1]
-
-        if lb is None:
-            lb = layout_left
-        if rb is None:
-            rb = layout_right
-
-        expanded.append((tb, lb, bb, rb))
-
-    final = []
-
-    # make taller
-    for i, bbox in enumerate(expanded):
-        top, left, bottom, right = bbox
-        adj_left_bb = None
-        adj_right_bb = None
-
-        for j, other_bbox in enumerate(expanded):
-            if i != j:
-                # make sure we're on the same horizontal strip
-                if abs(other_bbox[0] - top) < 10 or abs(other_bbox[2] - bottom) < 10:
-                    # 5 = tolerance because we might slightly overlap
-                    if other_bbox[3] < (left + 5):
-                        if adj_left_bb is None or other_bbox[3] > adj_left_bb[3]:
-                            adj_left_bb = other_bbox
-                    if other_bbox[1] > (right - 5):
-                        if adj_right_bb is None or other_bbox[1] < adj_right_bb[3]:
-                            adj_right_bb = other_bbox
+        adj_left_bb, adj_right_bb = find_adjacent_panels(panels, i)
 
         # expand to top and bottom of adjacent panels
         if adj_left_bb is not None and adj_right_bb is not None:
@@ -126,9 +112,52 @@ def expand_panel_bboxes(panels: list[BBox]) -> list[BBox]:
             top = min(top, adj_right_bb[0])
             bottom = max(bottom, adj_right_bb[2])
 
-        final.append((top, left, bottom, right))
+        expanded.append((top, left, bottom, right))
 
-    return final
+    return expanded
+
+
+def widen_panel_bboxes(panels: list[BBox]) -> list[BBox]:
+    """Horizontally expands panel bounding boxes to fill gaps in layout"""
+
+    panels = panels.copy()
+
+    layout_left = min(bbox[1] for bbox in panels)
+    layout_right = max(bbox[3] for bbox in panels)
+
+    expanded = []
+
+    for i, bbox in enumerate(panels):
+        top, left, bottom, right = bbox
+
+        adj_left_bb, adj_right_bb = find_adjacent_panels(panels, i)
+
+        gap_to_left = 0
+        gap_to_right = 0
+
+        # if we're on an edge, fill all available space
+        if adj_left_bb is None:
+            gap_to_left = left - layout_left
+        if adj_right_bb is None:
+            gap_to_right = layout_right - right
+
+        # if we're between two panels, expand but leave some padding
+        if adj_left_bb and adj_right_bb:
+            gap_to_left = left - adj_left_bb[3] - 5
+            gap_to_right = adj_right_bb[1] - right - 5
+
+        # only expand if the gap is significant
+        if gap_to_left > 10:
+            left -= gap_to_left
+        if gap_to_right > 10:
+            right += gap_to_right
+
+        new_bbox = (top, left, bottom, right)
+        # update list so we don't double expand adjacent panels
+        panels[i] = new_bbox
+        expanded.append(new_bbox)
+
+    return expanded
 
 
 def find_text_bboxes(page: Page, crop: BBox = (0.0, 0.0, 0.0, 0.0)) -> list[BBox]:
@@ -211,9 +240,9 @@ def main():
         img = Image.open(img_buffer)
 
         panels = get_panel_bboxes(img, pix.width, pix.height)
-        panels = expand_panel_bboxes(panels)
-
         panels = sorted(panels, key=lambda bbox: (bbox[0], bbox[1]))
+        panels = heighten_panel_bboxes(panels)
+        panels = widen_panel_bboxes(panels)
 
         text = []
 
