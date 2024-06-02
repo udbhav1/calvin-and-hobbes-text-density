@@ -21,19 +21,79 @@ reader = easyocr.Reader(["en"])
 
 
 def calculate_bbox_area(bbox: BBox) -> float:
+    """
+    Calculate the area of a bounding box.
+
+    Parameters
+    ----------
+    bbox : BBox
+        A bounding box represented as a tuple (top, left, bottom, right).
+
+    Returns
+    -------
+    float
+        The area of the bounding box.
+    """
     return (bbox[2] - bbox[0]) * (bbox[3] - bbox[1])
 
 
 def do_bboxes_overlap(a: BBox, b: BBox) -> bool:
+    """
+    Check if two bounding boxes overlap.
+
+    Parameters
+    ----------
+    a : BBox
+        The first bounding box represented as a tuple (top, left, bottom, right).
+    b : BBox
+        The second bounding box represented as a tuple (top, left, bottom, right).
+
+    Returns
+    -------
+    bool
+        True if the bounding boxes overlap, False otherwise.
+    """
     return a[0] < b[2] and a[2] > b[0] and a[1] < b[3] and a[3] > b[1]
 
 
 def merge_bboxes(a: BBox, b: BBox) -> BBox:
+    """
+    Merge two bounding boxes.
+
+    Parameters
+    ----------
+    a : BBox
+        The first bounding box represented as a tuple (top, left, bottom, right).
+    b : BBox
+        The second bounding box represented as a tuple (top, left, bottom, right).
+
+    Returns
+    -------
+    BBox
+        A bounding box that covers the area of both input bounding boxes.
+    """
     return (min(a[0], b[0]), min(a[1], b[1]), max(a[2], b[2]), max(a[3], b[3]))
 
 
 def get_panel_bboxes(page: Image.Image, width: int, height: int) -> list[BBox]:
-    """Extracts panel bounding boxes with canny edge detection"""
+    """
+    Extract panel bounding boxes with Canny edge detection.
+
+    Parameters
+    ----------
+    page : Image
+        The PIL image from which to extract panel bounding boxes.
+    width : int
+        The width of the image.
+    height : int
+        The height of the image.
+
+    Returns
+    -------
+    list[BBox]
+        A list of bounding boxes for each detected panel, where each bounding
+        box is represented as a tuple (top, left, bottom, right).
+    """
 
     grayscale = rgb2gray(page)
     edges = canny(grayscale)
@@ -66,7 +126,21 @@ def get_panel_bboxes(page: Image.Image, width: int, height: int) -> list[BBox]:
 def find_adjacent_panels(
     panels: list[BBox], index: int
 ) -> tuple[BBox | None, BBox | None]:
-    """Finds left and right neighbors given a panel index"""
+    """
+    Find left and right neighbors given a panel index.
+
+    Parameters
+    ----------
+    panels : list[BBox]
+        List of panel bounding boxes.
+    index : int
+        Index of the panel in the panels list.
+
+    Returns
+    -------
+    tuple[BBox | None, BBox | None]
+        Tuple of left and right adjacent panel bounding boxes, or None if not found.
+    """
 
     top, left, bottom, right = panels[index]
     adj_left_bb = None
@@ -92,7 +166,19 @@ def find_adjacent_panels(
 
 
 def heighten_panel_bboxes(panels: list[BBox]) -> list[BBox]:
-    """Vertically expands panel bounding boxes to match adjacent panels"""
+    """
+    Vertically expand panel bounding boxes to match adjacent panels.
+
+    Parameters
+    ----------
+    panels : list[BBox]
+        List of panel bounding boxes.
+
+    Returns
+    -------
+    list[BBox]
+        List of expanded panel bounding boxes in the same order.
+    """
 
     expanded = []
 
@@ -117,8 +203,24 @@ def heighten_panel_bboxes(panels: list[BBox]) -> list[BBox]:
     return expanded
 
 
-def widen_panel_bboxes(panels: list[BBox]) -> list[BBox]:
-    """Horizontally expands panel bounding boxes to fill gaps in layout"""
+def widen_panel_bboxes(panels: list[BBox], expand_edges: bool = False) -> list[BBox]:
+    """
+    Horizontally expand panel bounding boxes to fill gaps in layout.
+
+    Parameters
+    ----------
+    panels : list[BBox]
+        List of panel bounding boxes.
+    expand_edges: bool, optional
+        Whether to allow edge panels to expand toward other panels. Default is False,
+        meaning edge panels expand toward layout edges and only middle panels expand
+        toward other panels.
+
+    Returns
+    -------
+    list[BBox]
+        List of expanded panel bounding boxes in the same order.
+    """
 
     panels = panels.copy()
 
@@ -135,16 +237,22 @@ def widen_panel_bboxes(panels: list[BBox]) -> list[BBox]:
         gap_to_left = 0
         gap_to_right = 0
 
-        # if we're on an edge, fill all available space
+        # if we're expanding toward an edge, fill all available space
         if adj_left_bb is None:
             gap_to_left = left - layout_left
         if adj_right_bb is None:
             gap_to_right = layout_right - right
 
-        # if we're between two panels, expand but leave some padding
+        # if we're expanding toward a panel, leave some padding
         if adj_left_bb and adj_right_bb:
             gap_to_left = left - adj_left_bb[3] - 5
             gap_to_right = adj_right_bb[1] - right - 5
+
+        if expand_edges:
+            if adj_left_bb and not adj_right_bb:
+                gap_to_left = left - adj_left_bb[3] - 5
+            if adj_right_bb and not adj_left_bb:
+                gap_to_right = adj_right_bb[1] - right - 5
 
         # only expand if the gap is significant
         if gap_to_left > 10:
@@ -161,6 +269,23 @@ def widen_panel_bboxes(panels: list[BBox]) -> list[BBox]:
 
 
 def find_text_bboxes(page: Page, crop: BBox = (0.0, 0.0, 0.0, 0.0)) -> list[BBox]:
+    """
+    Find text bounding boxes with OCR.
+
+    Parameters
+    ----------
+    page : Page
+        Pymupdf page to extract text from.
+    crop : BBox, optional
+        Bounding box to crop the page to before OCR. Default is (0.0, 0.0, 0.0, 0.0),
+        meaning the uncropped page is used.
+
+    Returns
+    -------
+    list[BBox]
+        List of text bounding boxes.
+    """
+
     # dont want to import typing but want crop: BBox in signature so sentinel it is
     if crop != (0.0, 0.0, 0.0, 0.0):
         top, left, bottom, right = crop
@@ -195,6 +320,25 @@ def find_text_bboxes(page: Page, crop: BBox = (0.0, 0.0, 0.0, 0.0)) -> list[BBox
 
 
 def render_panels(panels: list[BBox], width: int, height: int, path: str) -> None:
+    """
+    Render the panel bounding boxes in a new image and save it to the specified path.
+
+    Parameters
+    ----------
+    panels : list[BBox]
+        List of panel bounding boxes.
+    width : int
+        Width of the image.
+    height : int
+        Height of the image.
+    path : str
+        Path to save the rendered image.
+
+    Returns
+    -------
+    None
+    """
+
     panel_img = np.zeros((height, width))
     for i, bbox in enumerate(panels, start=1):
         panel_img[bbox[0] : bbox[2], bbox[1] : bbox[3]] = i
@@ -207,6 +351,26 @@ def render_panels(panels: list[BBox], width: int, height: int, path: str) -> Non
 def render_annotated_page(
     panels: list[BBox], text: list[BBox], page: Image.Image, path: str
 ) -> None:
+    """
+    Render the panel and text bounding boxes on the given page image and save it to the
+    specified path.
+
+    Parameters
+    ----------
+    panels : list[BBox]
+        List of panel bounding boxes.
+    text : list[BBox]
+        List of text bounding boxes.
+    page : Image
+        The PIL image on which to render the bounding boxes.
+    path : str
+        Path to save the rendered annotated image.
+
+    Returns
+    -------
+    None
+    """
+
     draw = ImageDraw.Draw(page)
 
     for bbox in text:
@@ -243,6 +407,8 @@ def main():
         panels = sorted(panels, key=lambda bbox: (bbox[0], bbox[1]))
         panels = heighten_panel_bboxes(panels)
         panels = widen_panel_bboxes(panels)
+        # for the <edge panel>, <negative panel>, <edge panel> case
+        panels = widen_panel_bboxes(panels, expand_edges=True)
 
         text = []
 
