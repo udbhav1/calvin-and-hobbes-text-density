@@ -35,6 +35,7 @@ numpy==1.26.4
     # via easyocr
     # via imageio
     # via opencv-python-headless
+    # via pandas
     # via scikit-image
     # via scipy
     # via shapely
@@ -45,6 +46,8 @@ opencv-python-headless==4.9.0.80
 packaging==24.0
     # via lazy-loader
     # via scikit-image
+pandas==2.2.2
+    # via calvin-and-hobbes
 pillow==10.3.0
     # via calvin-and-hobbes
     # via easyocr
@@ -61,6 +64,10 @@ pypdf==4.2.0
     # via calvin-and-hobbes
 python-bidi==0.4.2
     # via easyocr
+python-dateutil==2.9.0.post0
+    # via pandas
+pytz==2024.1
+    # via pandas
 pyyaml==6.0.1
     # via easyocr
 scikit-image==0.23.2
@@ -74,6 +81,7 @@ shapely==2.0.4
     # via easyocr
 six==1.16.0
     # via python-bidi
+    # via python-dateutil
 sympy==1.12.1
     # via torch
 tifffile==2024.5.22
@@ -85,3 +93,5 @@ torchvision==0.18.0
     # via easyocr
 typing-extensions==4.12.1
     # via torch
+tzdata==2024.1
+    # via pandas

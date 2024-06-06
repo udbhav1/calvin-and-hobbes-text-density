@@ -5,6 +5,7 @@ import time
 
 import easyocr
 import numpy as np
+import pandas as pd
 import pymupdf
 from PIL import Image, ImageDraw
 from pymupdf import Matrix, Page
@@ -509,6 +510,8 @@ def main():
 
     doc = pymupdf.open(args.input_file)
 
+    data = []
+
     for page_index in range(len(doc)):
         start = time.time()
 
@@ -528,15 +531,26 @@ def main():
         panels = widen_panel_bboxes(panels, expand_edges=True)
 
         strips = segment_panels_by_strip(panels)
-        print(f"Segmented into {len(strips)} strips")
 
-        text = []
+        all_text = []
 
-        for bbox in panels:
-            panel_area = calculate_bbox_area(bbox)
-            text_bboxes = find_text_bboxes(page, crop=bbox)
-            if text_bboxes:
-                text += text_bboxes
+        for strip_index, strip in enumerate(strips):
+            strip_data = []
+            for panel_index, bbox in enumerate(strip):
+                panel_area = calculate_bbox_area(bbox)
+                text_bboxes = find_text_bboxes(page, crop=bbox)
+                all_text += text_bboxes
+                text_area = sum(calculate_bbox_area(x) for x in text_bboxes)
+
+                data.append(
+                    {
+                        "page": page_index,
+                        "strip": strip_index,
+                        "panel": panel_index,
+                        "panel_area": panel_area,
+                        "text_area": text_area,
+                    }
+                )
 
         end = time.time()
         print(f"Processed page {page_index} in {end - start:.2f}s")
@@ -549,7 +563,11 @@ def main():
         )
         render_strips(img, strips, args.output_dir + f"/page_{page_index}_strips.png")
         render_annotated_page(
-            img, panels, text, args.output_dir + f"/page_{page_index}_annotated.png"
+            img, panels, all_text, args.output_dir + f"/page_{page_index}_annotated.png"
         )
 
-    subprocess.run(f"open {args.output_dir}/*", shell=True)
+    df = pd.DataFrame(data)
+
+    df.to_csv(f"{args.output_dir}/data.csv", index=False)
+
+    subprocess.run(f"open {args.output_dir}/*.png", shell=True)
