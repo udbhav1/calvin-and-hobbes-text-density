@@ -14,6 +14,7 @@ from skimage.feature import canny
 from skimage.measure import label, regionprops
 
 BBox = tuple[float, float, float, float]
+Strip = list[BBox]
 
 PANEL_PAGE_AREA_THRESHOLD_PERCENT = 2
 
@@ -73,6 +74,29 @@ def merge_bboxes(a: BBox, b: BBox) -> BBox:
         A bounding box that covers the area of both input bounding boxes.
     """
     return (min(a[0], b[0]), min(a[1], b[1]), max(a[2], b[2]), max(a[3], b[3]))
+
+
+def calculate_strip_bbox(strip: Strip) -> BBox:
+    """
+    Calculate the bounding box of a strip.
+
+    Parameters
+    ----------
+    strip : Strip
+        A list of bounding boxes representing a strip, where each bounding box
+        is a tuple (top, left, bottom, right).
+
+    Returns
+    -------
+    BBox
+        A single bounding box that covers all bounding boxes in the strip.
+    """
+    top = min(bbox[0] for bbox in strip)
+    left = min(bbox[1] for bbox in strip)
+    bottom = max(bbox[2] for bbox in strip)
+    right = max(bbox[3] for bbox in strip)
+
+    return (top, left, bottom, right)
 
 
 def get_panel_bboxes(page: Image.Image, width: int, height: int) -> list[BBox]:
@@ -268,6 +292,70 @@ def widen_panel_bboxes(panels: list[BBox], expand_edges: bool = False) -> list[B
     return expanded
 
 
+def segment_panels_by_strip(panels: list[BBox]) -> list[Strip]:
+    """
+    Segment a list of panel bounding boxes into strips.
+
+    Parameters
+    ----------
+    panels : list[BBox]
+        List of panel bounding boxes.
+
+    Returns
+    -------
+    list[Strip]
+        A list of strips, where each strip is a list of panel bounding boxes. Strips
+        will be sorted top to bottom and panels will be sorted in reading order.
+    """
+
+    if not panels:
+        return []
+
+    panels = panels.copy()
+    panels = sorted(panels, key=lambda bbox: (bbox[0], bbox[1]))
+    strips = []
+
+    # panels on the same horizontal level are always in the same strip
+    cur = []
+    last_top = panels[0][0]
+    for bbox in panels:
+        top = bbox[0]
+        if abs(top - last_top) < 20:
+            cur.append(bbox)
+        else:
+            strips.append(cur)
+            cur = [bbox]
+        last_top = top
+
+    strips.append(cur)
+
+    if len(strips) < 3:
+        return strips
+
+    # small vertical gaps indicate a multi-line strip
+    strip_bboxes = [calculate_strip_bbox(strip) for strip in strips]
+    final_strips = []
+    cur = []
+
+    for i, strip in enumerate(strips):
+        if i == 0:
+            cur += strip
+            continue
+
+        top, _, bottom, _ = strip_bboxes[i]
+        prev_bottom = strip_bboxes[i - 1][2]
+        # this gap is usually less than 10 or over 30
+        if top - prev_bottom < 15:
+            cur += strip
+        else:
+            final_strips.append(cur)
+            cur = strip
+
+    final_strips.append(cur)
+
+    return final_strips
+
+
 def find_text_bboxes(page: Page, crop: BBox = (0.0, 0.0, 0.0, 0.0)) -> list[BBox]:
     """
     Find text bounding boxes with OCR.
@@ -275,7 +363,7 @@ def find_text_bboxes(page: Page, crop: BBox = (0.0, 0.0, 0.0, 0.0)) -> list[BBox
     Parameters
     ----------
     page : Page
-        Pymupdf page to extract text from.
+        PyMuPDF page to extract text from.
     crop : BBox, optional
         Bounding box to crop the page to before OCR. Default is (0.0, 0.0, 0.0, 0.0),
         meaning the uncropped page is used.
@@ -348,8 +436,37 @@ def render_panels(panels: list[BBox], width: int, height: int, path: str) -> Non
     )
 
 
+def render_strips(page: Image.Image, strips: list[Strip], path: str) -> None:
+    """
+    Render the strip bounding boxes on the given page image and save it to the specified
+    path.
+
+    Parameters
+    ----------
+    page : Image
+        The PIL image on which to render the bounding boxes.
+    strips : list[Strip]
+        List of lists of bounding boxes.
+    path : str
+        Path to save the rendered annotated image.
+
+    Returns
+    -------
+    None
+    """
+
+    draw = ImageDraw.Draw(page)
+
+    for strip in strips:
+        bbox = calculate_strip_bbox(strip)
+        top, left, bottom, right = bbox
+        draw.rectangle([left, top, right, bottom], outline="green")
+
+    page.save(path)
+
+
 def render_annotated_page(
-    panels: list[BBox], text: list[BBox], page: Image.Image, path: str
+    page: Image.Image, panels: list[BBox], text: list[BBox], path: str
 ) -> None:
     """
     Render the panel and text bounding boxes on the given page image and save it to the
@@ -357,12 +474,12 @@ def render_annotated_page(
 
     Parameters
     ----------
+    page : Image
+        The PIL image on which to render the bounding boxes.
     panels : list[BBox]
         List of panel bounding boxes.
     text : list[BBox]
         List of text bounding boxes.
-    page : Image
-        The PIL image on which to render the bounding boxes.
     path : str
         Path to save the rendered annotated image.
 
@@ -410,6 +527,9 @@ def main():
         # for the <edge panel>, <negative panel>, <edge panel> case
         panels = widen_panel_bboxes(panels, expand_edges=True)
 
+        strips = segment_panels_by_strip(panels)
+        print(f"Segmented into {len(strips)} strips")
+
         text = []
 
         for bbox in panels:
@@ -425,11 +545,11 @@ def main():
             panels,
             pix.width,
             pix.height,
-            args.output_dir + f"/panels{page_index}.png",
+            args.output_dir + f"/page_{page_index}_panels.png",
         )
-
+        render_strips(img, strips, args.output_dir + f"/page_{page_index}_strips.png")
         render_annotated_page(
-            panels, text, img, args.output_dir + f"/page{page_index}.png"
+            img, panels, text, args.output_dir + f"/page_{page_index}_annotated.png"
         )
 
     subprocess.run(f"open {args.output_dir}/*", shell=True)
