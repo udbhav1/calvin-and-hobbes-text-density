@@ -100,6 +100,44 @@ def calculate_strip_bbox(strip: Strip) -> BBox:
     return (top, left, bottom, right)
 
 
+def calculate_covered_area(bboxes: list[BBox]) -> int:
+    """
+    Calculate the total covered area of a list of bounding boxes that may overlap.
+
+    Parameters
+    ----------
+    bboxes : list[BBox]
+        List of bounding boxes.
+
+    Returns
+    -------
+    int
+        Total covered area.
+    """
+
+    if not bboxes:
+        return 0
+
+    # Find the overall bounding box to limit the grid size
+    min_top = int(min(bbox[0] for bbox in bboxes))
+    min_left = int(min(bbox[1] for bbox in bboxes))
+    max_bottom = int(max(bbox[2] for bbox in bboxes))
+    max_right = int(max(bbox[3] for bbox in bboxes))
+
+    grid_height = max_bottom - min_top
+    grid_width = max_right - min_left
+    grid = np.zeros((grid_height, grid_width), dtype=bool)
+
+    # Mark the covered areas on the grid
+    for bbox in bboxes:
+        top, left, bottom, right = map(int, bbox)
+        grid[top - min_top : bottom - min_top, left - min_left : right - min_left] = (
+            True
+        )
+
+    return np.sum(grid)
+
+
 def get_panel_bboxes(page: Image.Image, width: int, height: int) -> list[BBox]:
     """
     Extract panel bounding boxes with Canny edge detection.
@@ -539,8 +577,7 @@ def main():
             for panel_index, bbox in enumerate(strip):
                 panel_area = calculate_bbox_area(bbox)
                 text_bboxes = find_text_bboxes(page, crop=bbox)
-                all_text += text_bboxes
-                text_area = sum(calculate_bbox_area(x) for x in text_bboxes)
+                text_area = calculate_covered_area(text_bboxes)
 
                 data.append(
                     {
@@ -551,6 +588,8 @@ def main():
                         "text_area": text_area,
                     }
                 )
+
+                all_text += text_bboxes
 
         end = time.time()
         print(f"Processed page {page_index} in {end - start:.2f}s")
