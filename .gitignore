@@ -3,6 +3,8 @@ todo.txt
 
 /data/*
 /out/*
+!/data/.gitkeep
+!/out/.gitkeep
 
 **/*.ipynb_checkpoints/
 **/*.DS_Store

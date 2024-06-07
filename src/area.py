@@ -161,12 +161,9 @@ def get_panel_bboxes(page: Image.Image, width: int, height: int) -> list[BBox]:
 
     grayscale = rgb2gray(page)
     edges = canny(grayscale)
-    # Image.fromarray(edges).save("canny.png")
     segmentation = ndi.binary_fill_holes(edges)
-    # Image.fromarray(segmentation).save("segmentation.png")
 
     labels = label(segmentation)
-    # Image.fromarray(np.uint8(label2rgb(labels, bg_label=0) * 255)).save("labels.png")
 
     regions = regionprops(labels)
     panels = []
