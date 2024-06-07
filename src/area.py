@@ -13,6 +13,7 @@ from scipy import ndimage as ndi
 from skimage.color import label2rgb, rgb2gray
 from skimage.feature import canny
 from skimage.measure import label, regionprops
+from tqdm import tqdm
 
 BBox = tuple[float, float, float, float]
 Strip = list[BBox]
@@ -544,13 +545,15 @@ def main():
     parser = argparse.ArgumentParser(description="Calculate text percent of a comic")
     parser.add_argument("input_file", help="Path to input PDF file")
     parser.add_argument("output_dir", help="Path to output directory")
+    parser.add_argument("--render", action="store_true", help="Render annotated pages")
+    parser.add_argument("--dump", action="store_true", help="Dump data to CSV")
     args = parser.parse_args()
 
     doc = pymupdf.open(args.input_file)
 
     data = []
 
-    for page_index in range(len(doc)):
+    for page_index in tqdm(range(len(doc))):
         start = time.time()
 
         page = doc.load_page(page_index)
@@ -592,21 +595,29 @@ def main():
                 all_text += text_bboxes
 
         end = time.time()
-        print(f"Processed page {page_index} in {end - start:.2f}s")
+        # print(f"Processed page {page_index} in {end - start:.2f}s")
 
-        render_panels(
-            panels,
-            pix.width,
-            pix.height,
-            args.output_dir + f"/page_{page_index}_panels.png",
-        )
-        render_strips(img, strips, args.output_dir + f"/page_{page_index}_strips.png")
-        render_annotated_page(
-            img, panels, all_text, args.output_dir + f"/page_{page_index}_annotated.png"
-        )
+        # wasteful to write every time but it's only 1350 pages, so max around 500kb csv
+        if args.dump:
+            df = pd.DataFrame(data)
+            df.to_csv(f"{args.output_dir}/data.csv", index=False)
 
-    df = pd.DataFrame(data)
+        if args.render:
+            render_panels(
+                panels,
+                pix.width,
+                pix.height,
+                args.output_dir + f"/page_{page_index}_panels.png",
+            )
+            render_strips(
+                img, strips, args.output_dir + f"/page_{page_index}_strips.png"
+            )
+            render_annotated_page(
+                img,
+                panels,
+                all_text,
+                args.output_dir + f"/page_{page_index}_annotated.png",
+            )
 
-    df.to_csv(f"{args.output_dir}/data.csv", index=False)
-
-    subprocess.run(f"open {args.output_dir}/*.png", shell=True)
+    if args.render:
+        subprocess.run(f"open {args.output_dir}/*.png", shell=True)
